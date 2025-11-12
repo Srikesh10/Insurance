@@ -1,0 +1,73 @@
+
+Organizations:
+  - &InsurerOrg
+    Name: InsurerOrg
+    ID: InsurerOrgMSP
+    MSPDir: /home/reddinho/insurance/crypto-config/peerOrganizations/insurer.example.com/msp
+    Policies:
+      Readers:
+        Type: Signature
+        Rule: "OR('InsurerOrgMSP.member')"
+      Writers:
+        Type: Signature
+        Rule: "OR('InsurerOrgMSP.member')"
+      Admins:
+        Type: Signature
+        Rule: "OR('InsurerOrgMSP.admin')"
+    AnchorPeers:
+      - Host: peer0.insurer.example.com
+        Port: 7051
+
+  - &ClientOrg
+    Name: ClientOrg
+    ID: ClientOrgMSP
+    MSPDir: /home/reddinho/insurance/crypto-config/peerOrganizations/client.example.com/msp
+    Policies:
+      Readers:
+        Type: Signature
+        Rule: "OR('ClientOrgMSP.member')"
+      Writers:
+        Type: Signature
+        Rule: "OR('ClientOrgMSP.member')"
+      Admins:
+        Type: Signature
+        Rule: "OR('ClientOrgMSP.admin')"
+    AnchorPeers:
+      - Host: peer0.client.example.com
+        Port: 7051
+
+  - &SOCOrg
+    Name: SOCOrg
+    ID: SOCOrgMSP
+    MSPDir: /home/reddinho/insurance/crypto-config/peerOrganizations/soc.example.com/msp
+    Policies:
+      Readers:
+        Type: Signature
+        Rule: "OR('SOCOrgMSP.member')"
+      Writers:
+        Type: Signature
+        Rule: "OR('SOCOrgMSP.member')"
+      Admins:
+        Type: Signature
+        Rule: "OR('SOCOrgMSP.admin')"
+    AnchorPeers:
+      - Host: peer0.soc.example.com
+        Port: 7051
+
+  - &RegulatorOrg
+    Name: RegulatorOrg
+    ID: RegulatorOrgMSP
+    MSPDir: /home/reddinho/insurance/crypto-config/peerOrganizations/regulator.example.com/msp
+    Policies:
+      Readers:
+        Type: Signature
+        Rule: "OR('RegulatorOrgMSP.member')"
+      Writers:
+        Type: Signature
+        Rule: "OR('RegulatorOrgMSP.member')"
+      Admins:
+        Type: Signature
+        Rule: "OR('RegulatorOrgMSP.admin')"
+    AnchorPeers:
+      - Host: peer0.regulator.example.com
+        Port: 7051

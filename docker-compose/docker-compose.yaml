@@ -1,0 +1,198 @@
+version: '2'
+
+networks:
+  insurance-net:
+    driver: bridge
+
+services:
+  orderer.example.com:
+    container_name: orderer.example.com
+    image: hyperledger/fabric-orderer:2.5.11
+    environment:
+      - ORDERER_GENERAL_LISTENADDRESS=0.0.0.0
+      - ORDERER_GENERAL_LISTENPORT=7050
+      - ORDERER_GENERAL_LOCALMSPID=OrdererOrgMSP
+      - ORDERER_GENERAL_LOCALMSPDIR=/opt/crypto-config/ordererOrganizations/example.com/orderers/orderer.example.com/msp
+      - ORDERER_GENERAL_TLS_ENABLED=true
+      - ORDERER_GENERAL_TLS_PRIVATEKEY=/opt/crypto-config/ordererOrganizations/example.com/orderers/orderer.example.com/tls/server.key
+      - ORDERER_GENERAL_TLS_CERTIFICATE=/opt/crypto-config/ordererOrganizations/example.com/orderers/orderer.example.com/tls/server.crt
+      - ORDERER_GENERAL_TLS_ROOTCAS=/opt/crypto-config/ordererOrganizations/example.com/orderers/orderer.example.com/tls/ca.crt
+      - ORDERER_GENERAL_GENESISMETHOD=file
+      - ORDERER_GENERAL_GENESISFILE=/opt/artifacts/genesis.block
+      - FABRIC_LOGGING_SPEC=DEBUG    
+    working_dir: /opt/gopath/src/github.com/hyperledger/fabric
+    command: orderer
+    volumes:
+      - /home/reddinho/insurance/crypto-config:/opt/crypto-config
+      - /home/reddinho/insurance/config/artifacts:/opt/artifacts
+      - /var/run/docker.sock:/host/var/run/docker.sock
+    ports:
+      - 7050:7050
+    networks:
+      - insurance-net
+
+  peer0.insurer.example.com:
+    container_name: peer0.insurer.example.com
+    hostname: peer0.insurer.example.com 
+    image: hyperledger/fabric-peer:2.5.11
+    environment:
+      - CORE_PEER_ID=peer0.insurer.example.com
+      - CORE_PEER_ADDRESS=peer0.insurer.example.com:7051
+      - CORE_PEER_LISTENADDRESS=0.0.0.0:7051
+      - CORE_PEER_CHAINCODE_LISTENADDRESS=0.0.0.0:7052
+      - CORE_PEER_CHAINCODE_ADDRESS=peer0.insurer.example.com:7052
+      - CORE_VM_DOCKER_HOSTCONFIG_NETWORKMODE=docker-compose_insurance-net
+      - CORE_PEER_LOCALMSPID=InsurerOrgMSP
+      - CORE_PEER_MSPCONFIGPATH=/opt/crypto-config/peerOrganizations/insurer.example.com/peers/peer0.insurer.example.com/msp
+      - CORE_VM_ENDPOINT=unix:///var/run/docker.sock
+      - CORE_PEER_TLS_CLIENTAUTHREQUIRED=false
+      - CORE_PEER_TLS_ENABLED=true
+      - CORE_PEER_TLS_CERT_FILE=/opt/crypto-config/peerOrganizations/insurer.example.com/peers/peer0.insurer.example.com/tls/server.crt
+      - CORE_PEER_TLS_KEY_FILE=/opt/crypto-config/peerOrganizations/insurer.example.com/peers/peer0.insurer.example.com/tls/server.key
+      - CORE_PEER_TLS_ROOTCERT_FILE=/opt/crypto-config/peerOrganizations/insurer.example.com/peers/peer0.insurer.example.com/tls/ca.crt
+      - CORE_PEER_GOSSIP_EXTERNALENDPOINT=peer0.insurer.example.com:7051
+      - CORE_PEER_GOSSIP_BOOTSTRAP=peer0.insurer.example.com:7051
+      - ORDERER_TLS_ROOTCERT_FILE=/opt/crypto-config/ordererOrganizations/example.com/orderers/orderer.example.com/tls/ca.crt
+      - CORE_PEER_TLS_CLIENTROOTCAS_FILES=/opt/crypto-config/peerOrganizations/insurer.example.com/tlsca/tlsca.insurer.example.com-cert.pem,/opt/crypto-config/peerOrganizations/client.example.com/tlsca/tlsca.client.example.com-cert.pem,/opt/crypto-config/peerOrganizations/regulator.example.com/tlsca/tlsca.regulator.example.com-cert.pem
+      - FABRIC_LOGGING_SPEC=DEBUG
+    working_dir: /opt/gopath/src/github.com/hyperledger/fabric/peer
+    command: peer node start
+    volumes:
+      - /home/reddinho/insurance/crypto-config:/opt/crypto-config
+      - /home/reddinho/insurance/config/artifacts:/opt/artifacts
+      - /home/reddinho/insurance/config/core.yaml:/opt/gopath/src/github.com/hyperledger/fabric/peer/core.yaml
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /var/run/docker.sock:/host/var/run/docker.sock
+    ports:
+      - 7051:7051
+    networks:
+        - insurance-net
+  
+  peer0.client.example.com:
+    container_name: peer0.client.example.com
+    image: hyperledger/fabric-peer:2.5.11
+    environment:
+      - CORE_PEER_ID=peer0.client.example.com
+      - CORE_PEER_ADDRESS=peer0.client.example.com:7051
+      - CORE_PEER_LISTENADDRESS=0.0.0.0:7051
+      - CORE_PEER_CHAINCODE_LISTENADDRESS=0.0.0.0:7052
+      - CORE_PEER_CHAINCODE_ADDRESS=peer0.client.example.com:7052
+      - CORE_VM_DOCKER_HOSTCONFIG_NETWORKMODE=docker-compose_insurance-net
+      - CORE_PEER_LOCALMSPID=ClientOrgMSP
+      - CORE_VM_ENDPOINT=unix:///var/run/docker.sock
+      - CORE_PEER_TLS_CLIENTAUTHREQUIRED=false
+      - CORE_PEER_MSPCONFIGPATH=/opt/crypto-config/peerOrganizations/client.example.com/peers/peer0.client.example.com/msp
+      - CORE_PEER_TLS_ENABLED=true
+      - CORE_PEER_TLS_CERT_FILE=/opt/crypto-config/peerOrganizations/client.example.com/peers/peer0.client.example.com/tls/server.crt
+      - CORE_PEER_TLS_KEY_FILE=/opt/crypto-config/peerOrganizations/client.example.com/peers/peer0.client.example.com/tls/server.key
+      - CORE_PEER_TLS_ROOTCERT_FILE=/opt/crypto-config/peerOrganizations/client.example.com/peers/peer0.client.example.com/tls/ca.crt 
+      - CORE_PEER_GOSSIP_EXTERNALENDPOINT=peer0.client.example.com:7051
+      - CORE_PEER_GOSSIP_BOOTSTRAP=peer0.client.example.com:7051
+      - ORDERER_TLS_ROOTCERT_FILE=/opt/crypto-config/ordererOrganizations/example.com/orderers/orderer.example.com/tls/ca.crt
+      - CORE_PEER_TLS_CLIENTROOTCAS_FILES=/opt/crypto-config/peerOrganizations/client.example.com/tlsca/tlsca.client.example.com-cert.pem,/opt/crypto-config/peerOrganizations/insurer.example.com/tlsca/tlsca.insurer.example.com-cert.pem
+      - FABRIC_LOGGING_SPEC=DEBUG
+    working_dir: /opt/gopath/src/github.com/hyperledger/fabric/peer
+    command: peer node start
+    volumes:
+      - /home/reddinho/insurance/crypto-config:/opt/crypto-config
+      - /home/reddinho/insurance/config/artifacts:/opt/artifacts
+      - /home/reddinho/insurance/config/core.yaml:/opt/gopath/src/github.com/hyperledger/fabric/peer/core.yaml
+      - /var/run/docker.sock:/var/run/docker.sock
+    ports:
+      - 8051:7051
+    networks:
+      - insurance-net
+        
+  
+  peer0.soc.example.com:
+    container_name: peer0.soc.example.com
+    image: hyperledger/fabric-peer:2.5.11
+    environment:
+      - CORE_PEER_ID=peer0.soc.example.com
+      - CORE_PEER_ADDRESS=peer0.soc.example.com:7051
+      - CORE_PEER_LISTENADDRESS=0.0.0.0:7051
+      - CORE_PEER_CHAINCODE_LISTENADDRESS=0.0.0.0:7052
+      - CORE_PEER_CHAINCODE_ADDRESS=peer0.soc.example.com:7052
+      - CORE_VM_DOCKER_HOSTCONFIG_NETWORKMODE=docker-compose_insurance-net
+      - CORE_PEER_TLS_CLIENTAUTHREQUIRED=false
+      - CORE_PEER_LOCALMSPID=SOCOrgMSP
+      - CORE_PEER_MSPCONFIGPATH=/opt/crypto-config/peerOrganizations/soc.example.com/peers/peer0.soc.example.com/msp
+      - CORE_VM_ENDPOINT=unix:///var/run/docker.sock
+      - CORE_PEER_TLS_ENABLED=true
+      - CORE_PEER_TLS_CERT_FILE=/opt/crypto-config/peerOrganizations/soc.example.com/peers/peer0.soc.example.com/tls/server.crt
+      - CORE_PEER_TLS_KEY_FILE=/opt/crypto-config/peerOrganizations/soc.example.com/peers/peer0.soc.example.com/tls/server.key
+      - CORE_PEER_TLS_ROOTCERT_FILE=/opt/crypto-config/peerOrganizations/soc.example.com/peers/peer0.soc.example.com/tls/ca.crt
+      - CORE_PEER_GOSSIP_EXTERNALENDPOINT=peer0.soc.example.com:7051
+      - CORE_PEER_GOSSIP_BOOTSTRAP=peer0.soc.example.com:7051
+      - ORDERER_TLS_ROOTCERT_FILE=/opt/crypto-config/ordererOrganizations/example.com/orderers/orderer.example.com/tls/ca.crt
+      - CORE_PEER_TLS_CLIENTROOTCAS_FILES=/opt/crypto-config/peerOrganizations/soc.example.com/tlsca/tlsca.soc.example.com-cert.pem,/opt/crypto-config/peerOrganizations/insurer.example.com/tlsca/tlsca.insurer.example.com-cert.pem
+      - FABRIC_LOGGING_SPEC=DEBUG 
+    working_dir: /opt/gopath/src/github.com/hyperledger/fabric/peer
+    command: peer node start
+    volumes:
+      - /home/reddinho/insurance/crypto-config:/opt/crypto-config
+      - /home/reddinho/insurance/config/artifacts:/opt/artifacts
+      - /home/reddinho/insurance/config/core.yaml:/opt/gopath/src/github.com/hyperledger/fabric/peer/core.yaml
+      - /var/run/docker.sock:/var/run/docker.sock
+    ports:
+      - 9051:7051
+    networks:
+      - insurance-net
+  
+  peer0.regulator.example.com:
+    container_name: peer0.regulator.example.com
+    image: hyperledger/fabric-peer:2.5.11
+    environment:
+      - CORE_PEER_ID=peer0.regulator.example.com
+      - CORE_PEER_ADDRESS=peer0.regulator.example.com:7051
+      - CORE_PEER_LISTENADDRESS=0.0.0.0:7051
+      - CORE_PEER_CHAINCODE_LISTENADDRESS=0.0.0.0:7052
+      - CORE_PEER_CHAINCODE_ADDRESS=peer0.regulator.example.com:7052
+      - CORE_VM_DOCKER_HOSTCONFIG_NETWORKMODE=docker-compose_insurance-net
+      - CORE_PEER_LOCALMSPID=RegulatorOrgMSP
+      - CORE_PEER_MSPCONFIGPATH=/opt/crypto-config/peerOrganizations/regulator.example.com/peers/peer0.regulator.example.com/msp
+      - CORE_VM_ENDPOINT=unix:///var/run/docker.sock
+      - CORE_PEER_TLS_ENABLED=true
+      - CORE_PEER_TLS_CERT_FILE=/opt/crypto-config/peerOrganizations/regulator.example.com/peers/peer0.regulator.example.com/tls/server.crt
+      - CORE_PEER_TLS_KEY_FILE=/opt/crypto-config/peerOrganizations/regulator.example.com/peers/peer0.regulator.example.com/tls/server.key
+      - CORE_PEER_TLS_ROOTCERT_FILE=/opt/crypto-config/peerOrganizations/regulator.example.com/peers/peer0.regulator.example.com/tls/ca.crt
+      - CORE_PEER_GOSSIP_EXTERNALENDPOINT=peer0.regulator.example.com:7051
+      - CORE_PEER_GOSSIP_BOOTSTRAP=peer0.regulator.example.com:7051
+      - ORDERER_TLS_ROOTCERT_FILE=/opt/crypto-config/ordererOrganizations/example.com/orderers/orderer.example.com/tls/ca.crt
+      - CORE_PEER_TLS_CLIENTAUTHREQUIRED=false
+      - CORE_PEER_TLS_CLIENTROOTCAS_FILES=/opt/crypto-config/peerOrganizations/regulator.example.com/tlsca/tlsca.regulator.example.com-cert.pem,/opt/crypto-config/peerOrganizations/insurer.example.com/tlsca/tlsca.insurer.example.com-cert.pem
+      - FABRIC_LOGGING_SPEC=DEBUG
+    working_dir: /opt/gopath/src/github.com/hyperledger/fabric/peer
+    command: peer node start
+    volumes:
+      - /home/reddinho/insurance/crypto-config:/opt/crypto-config
+      - /home/reddinho/insurance/config/artifacts:/opt/artifacts
+      - /home/reddinho/insurance/config/core.yaml:/opt/gopath/src/github.com/hyperledger/fabric/peer/core.yaml
+      - /var/run/docker.sock:/var/run/docker.sock
+    ports:
+      - 10051:7051
+    networks:
+      - insurance-net
+  
+  cli:
+    container_name: cli
+    image: hyperledger/fabric-tools:2.5.11
+    tty: true
+    stdin_open: true
+    environment:
+      - GOPATH=/opt/gopath
+      - FABRIC_LOGGING_SPEC=INFO
+      - CORE_PEER_TLS_ENABLED=true
+      - CORE_PEER_MSPCONFIGPATH=/opt/crypto-config/peerOrganizations/insurer.example.com/users/Admin@insurer.example.com/msp
+      - CORE_PEER_LOCALMSPID=InsurerOrgMSP
+      - CORE_PEER_TLS_ROOTCERT_FILE=/opt/crypto-config/peerOrganizations/insurer.example.com/peers/peer0.insurer.example.com/tls/ca.crt
+      - CORE_PEER_ADDRESS=peer0.insurer.example.com:7051
+    
+    working_dir: /opt/gopath/src/github.com/hyperledger/fabric/peer
+    command: /bin/bash
+    volumes:
+      - /home/reddinho/insurance/crypto-config:/opt/crypto-config
+      - /home/reddinho/insurance/config/artifacts:/opt/artifacts
+      - /home/reddinho/insurance/configtx:/opt/configtx
+    networks:
+      - insurance-net

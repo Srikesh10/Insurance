@@ -1,0 +1,248 @@
+---
+################################################################################
+#
+#   Section: Organizations
+#
+################################################################################
+Organizations:
+    - &OrdererOrg
+        Name: OrdererOrg
+        ID: OrdererOrgMSP
+        MSPDir: /opt/crypto-config/ordererOrganizations/example.com/msp
+        Policies:
+            Readers:
+                Type: Signature
+                Rule: "OR('OrdererOrgMSP.member')"
+            Writers:
+                Type: Signature
+                Rule: "OR('OrdererOrgMSP.member')"
+            Admins:
+                Type: Signature
+                Rule: "OR('OrdererOrgMSP.admin')"
+
+    - &InsurerOrg
+        Name: InsurerOrg
+        ID: InsurerOrgMSP
+        MSPDir: /opt/crypto-config/peerOrganizations/insurer.example.com/msp
+        Policies:
+            Readers:
+                Type: Signature
+                Rule: "OR('InsurerOrgMSP.member')"
+            Writers:
+                Type: Signature
+                Rule: "OR('InsurerOrgMSP.member')"
+            Admins:
+                Type: Signature
+                Rule: "OR('InsurerOrgMSP.admin')"
+            Endorsement:
+                Type: Signature
+                Rule: "OR('InsurerOrgMSP.peer', 'InsurerOrgMSP.admin', 'InsurerOrgMSP.member')"
+        AnchorPeers:
+            - Host: peer0.insurer.example.com
+              Port: 7051
+
+    - &ClientOrg
+        Name: ClientOrg
+        ID: ClientOrgMSP
+        MSPDir: /opt/crypto-config/peerOrganizations/client.example.com/msp
+        Policies:
+            Readers:
+                Type: Signature
+                Rule: "OR('ClientOrgMSP.member')"
+            Writers:
+                Type: Signature
+                Rule: "OR('ClientOrgMSP.member')"
+            Admins:
+                Type: Signature
+                Rule: "OR('ClientOrgMSP.admin')"
+            Endorsement:
+                Type: Signature
+                Rule: "OR('ClientOrgMSP.peer','ClientOrgMSP.member','ClientOrgMSP.admin')"
+        AnchorPeers:
+            - Host: peer0.client.example.com
+              Port: 7051
+
+    - &SOCOrg
+        Name: SOCOrg
+        ID: SOCOrgMSP
+        MSPDir: /opt/crypto-config/peerOrganizations/soc.example.com/msp
+        Policies:
+            Readers:
+                Type: Signature
+                Rule: "OR('SOCOrgMSP.member')"
+            Writers:
+                Type: Signature
+                Rule: "OR('SOCOrgMSP.member')"
+            Admins:
+                Type: Signature
+                Rule: "OR('SOCOrgMSP.admin')"
+            Endorsement:
+                Type: Signature
+                Rule: "OR('SOCOrgMSP.peer','SOCOrgMSP.member','SOCOrgMSP.admin')"
+        AnchorPeers:
+            - Host: peer0.soc.example.com
+              Port: 7051
+
+    - &RegulatorOrg
+        Name: RegulatorOrg
+        ID: RegulatorOrgMSP
+        MSPDir: /opt/crypto-config/peerOrganizations/regulator.example.com/msp
+        Policies:
+            Readers:
+                Type: Signature
+                Rule: "OR('RegulatorOrgMSP.member')"
+            Writers:
+                Type: Signature
+                Rule: "OR('RegulatorOrgMSP.member')"
+            Admins:
+                Type: Signature
+                Rule: "OR('RegulatorOrgMSP.admin')"
+            Endorsement:
+                Type: Signature
+                Rule: "OR('RegulatorOrgMSP.peer','RegulatorOrgMSP.member','RegulatorOrgMSP.admin')"
+        AnchorPeers:
+            - Host: peer0.regulator.example.com
+              Port: 7051
+
+################################################################################
+#
+#   Section: Capabilities
+#
+################################################################################
+Capabilities:
+    Channel: &ChannelCapabilities
+        V2_0: true
+
+    Orderer: &OrdererCapabilities
+        V2_0: true
+
+    Application: &ApplicationCapabilities
+        V2_0: true
+
+################################################################################
+#
+#   Section: Application
+#
+################################################################################
+Application: &ApplicationDefaults
+    Organizations:
+    Policies:
+        Readers:
+            Type: ImplicitMeta
+            Rule: "ANY Readers"
+        Writers:
+            Type: ImplicitMeta
+            Rule: "ANY Writers"
+        Admins:
+            Type: ImplicitMeta
+            Rule: "MAJORITY Admins"
+        LifecycleEndorsement:
+            Type: Signature
+            Rule: "OR('InsurerOrgMSP.peer', 'ClientOrgMSP.peer', 'RegulatorOrgMSP.peer', 'SOCOrgMSP.peer')"
+        Endorsement:
+            Type: ImplicitMeta
+            Rule: "ANY Endorsement"
+    Capabilities:
+        <<: *ApplicationCapabilities
+
+################################################################################
+#
+#   Section: Orderer
+#
+################################################################################
+Orderer: &OrdererDefaults
+    OrdererType: etcdraft
+    Addresses:
+        - orderer.example.com:7050
+    BatchTimeout: 2s
+    BatchSize:
+        MaxMessageCount: 10
+        AbsoluteMaxBytes: 99 MB
+        PreferredMaxBytes: 512 KB
+    Organizations:
+    EtcdRaft:
+        Consenters:
+            - Host: orderer.example.com
+              Port: 7050
+              ClientTLSCert: /opt/crypto-config/ordererOrganizations/example.com/orderers/orderer.example.com/tls/server.crt
+              ServerTLSCert: /opt/crypto-config/ordererOrganizations/example.com/orderers/orderer.example.com/tls/server.crt
+    Policies:
+        Readers:
+            Type: ImplicitMeta
+            Rule: "ANY Readers"
+        Writers:
+            Type: ImplicitMeta
+            Rule: "ANY Writers"
+        Admins:
+            Type: ImplicitMeta
+            Rule: "MAJORITY Admins"
+        BlockValidation:
+            Type: ImplicitMeta
+            Rule: "ANY Writers"
+    Capabilities:
+        <<: *OrdererCapabilities
+
+################################################################################
+#
+#   Section: Channel
+#
+################################################################################
+Channel: &ChannelDefaults
+    Policies:
+        Readers:
+            Type: ImplicitMeta
+            Rule: "ANY Readers"
+        Writers:
+            Type: ImplicitMeta
+            Rule: "ANY Writers"
+        Admins:
+            Type: ImplicitMeta
+            Rule: "MAJORITY Admins"
+    Capabilities:
+        <<: *ChannelCapabilities
+
+################################################################################
+#
+#   Section: Profiles
+#
+################################################################################
+Profiles:
+    OrdererGenesis:
+        <<: *ChannelDefaults
+        Orderer:
+            <<: *OrdererDefaults
+            Organizations:
+                - *OrdererOrg
+        Consortiums:
+            InsuranceConsortium:
+                Organizations:
+                    - *InsurerOrg
+                    - *ClientOrg
+                    - *RegulatorOrg
+                    - *SOCOrg
+            SOCConsortium:
+                Organizations:
+                    - *SOCOrg
+
+    InsuranceChannel:
+        Consortium: InsuranceConsortium
+        <<: *ChannelDefaults
+        Application:
+            <<: *ApplicationDefaults
+            Organizations:
+                - *InsurerOrg
+                - *ClientOrg
+                - *RegulatorOrg
+                - *SOCOrg
+            Capabilities:
+                <<: *ApplicationCapabilities
+
+    SOCChannel:
+        Consortium: SOCConsortium
+        <<: *ChannelDefaults
+        Application:
+            <<: *ApplicationDefaults
+            Organizations:
+                - *SOCOrg
+            Capabilities:
+                <<: *ApplicationCapabilities

@@ -1,0 +1,299 @@
+/*
+ * Example: How to add REAL payment functionality to insurance chaincode
+ * This shows the structure needed for actual money transfers
+ */
+
+package main
+
+import (
+	"encoding/json"
+	"fmt"
+	"log"
+
+	"github.com/hyperledger/fabric-contract-api-go/v2/contractapi"
+)
+
+// Account represents a financial account in the system
+type Account struct {
+	AccountID string  `json:"accountId"` // e.g., "insurer:AcmeInsurance" or "client:TechCorp"
+	Balance   float64 `json:"balance"`   // Current balance
+	Currency  string  `json:"currency"`   // "USD", "INSURANCE_TOKEN", etc.
+	Owner     string  `json:"owner"`      // Organization or entity name
+}
+
+// TransferRecord represents a money transfer transaction
+type TransferRecord struct {
+	TransferID string  `json:"transferId"`
+	FromAccount string `json:"fromAccount"`
+	ToAccount   string `json:"toAccount"`
+	Amount      float64 `json:"amount"`
+	Currency    string  `json:"currency"`
+	ClaimID     string  `json:"claimId"`    // Link to insurance claim
+	Timestamp   string  `json:"timestamp"`
+	Status      string  `json:"status"`     // "pending", "completed", "failed"
+}
+
+// InsuranceContract with payment functionality
+type InsuranceContract struct {
+	contractapi.Contract
+}
+
+// CreateAccount creates a new account with initial balance
+func (s *InsuranceContract) CreateAccount(
+	ctx contractapi.TransactionContextInterface,
+	accountId string,
+	owner string,
+	initialBalance float64,
+	currency string,
+) error {
+	log.Printf("CreateAccount called: accountId=%s, owner=%s, balance=%.2f", accountId, owner, initialBalance)
+
+	// Check if account exists
+	accountKey := "account:" + accountId
+	existing, err := ctx.GetStub().GetState(accountKey)
+	if err != nil {
+		return fmt.Errorf("failed to read account: %v", err)
+	}
+	if existing != nil {
+		return fmt.Errorf("account %s already exists", accountId)
+	}
+
+	// Create account
+	account := Account{
+		AccountID: accountId,
+		Owner:     owner,
+		Balance:   initialBalance,
+		Currency:  currency,
+	}
+
+	accountJSON, err := json.Marshal(account)
+	if err != nil {
+		return fmt.Errorf("failed to marshal account: %v", err)
+	}
+
+	err = ctx.GetStub().PutState(accountKey, accountJSON)
+	if err != nil {
+		return fmt.Errorf("failed to put account: %v", err)
+	}
+
+	log.Printf("Account created: %s with balance %.2f %s", accountId, initialBalance, currency)
+	return nil
+}
+
+// GetBalance retrieves the balance of an account
+func (s *InsuranceContract) GetBalance(
+	ctx contractapi.TransactionContextInterface,
+	accountId string,
+) (*Account, error) {
+	accountKey := "account:" + accountId
+	accountJSON, err := ctx.GetStub().GetState(accountKey)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read account: %v", err)
+	}
+	if accountJSON == nil {
+		return nil, fmt.Errorf("account %s does not exist", accountId)
+	}
+
+	var account Account
+	err = json.Unmarshal(accountJSON, &account)
+	if err != nil {
+		return nil, fmt.Errorf("failed to unmarshal account: %v", err)
+	}
+
+	return &account, nil
+}
+
+// TransferFunds transfers money from one account to another
+func (s *InsuranceContract) TransferFunds(
+	ctx contractapi.TransactionContextInterface,
+	fromAccountId string,
+	toAccountId string,
+	amount float64,
+	claimId string,
+) error {
+	log.Printf("TransferFunds called: from=%s, to=%s, amount=%.2f", fromAccountId, toAccountId, amount)
+
+	if amount <= 0 {
+		return fmt.Errorf("amount must be positive")
+	}
+
+	// Get from account
+	fromAccount, err := s.GetBalance(ctx, fromAccountId)
+	if err != nil {
+		return fmt.Errorf("failed to get from account: %v", err)
+	}
+
+	// Check balance
+	if fromAccount.Balance < amount {
+		return fmt.Errorf("insufficient balance: have %.2f, need %.2f", fromAccount.Balance, amount)
+	}
+
+	// Get to account
+	toAccount, err := s.GetBalance(ctx, toAccountId)
+	if err != nil {
+		return fmt.Errorf("failed to get to account: %v", err)
+	}
+
+	// Check currency match
+	if fromAccount.Currency != toAccount.Currency {
+		return fmt.Errorf("currency mismatch: %s vs %s", fromAccount.Currency, toAccount.Currency)
+	}
+
+	// Update balances
+	fromAccount.Balance -= amount
+	toAccount.Balance += amount
+
+	// Save from account
+	fromAccountJSON, err := json.Marshal(fromAccount)
+	if err != nil {
+		return fmt.Errorf("failed to marshal from account: %v", err)
+	}
+	err = ctx.GetStub().PutState("account:"+fromAccountId, fromAccountJSON)
+	if err != nil {
+		return fmt.Errorf("failed to update from account: %v", err)
+	}
+
+	// Save to account
+	toAccountJSON, err := json.Marshal(toAccount)
+	if err != nil {
+		return fmt.Errorf("failed to marshal to account: %v", err)
+	}
+	err = ctx.GetStub().PutState("account:"+toAccountId, toAccountJSON)
+	if err != nil {
+		return fmt.Errorf("failed to update to account: %v", err)
+	}
+
+	// Create transfer record
+	transferId := fmt.Sprintf("transfer:%s:%s", claimId, ctx.GetStub().GetTxID())
+	transfer := TransferRecord{
+		TransferID:  transferId,
+		FromAccount: fromAccountId,
+		ToAccount:   toAccountId,
+		Amount:      amount,
+		Currency:    fromAccount.Currency,
+		ClaimID:     claimId,
+		Timestamp:   ctx.GetStub().GetTxTimestamp().String(),
+		Status:      "completed",
+	}
+
+	transferJSON, err := json.Marshal(transfer)
+	if err != nil {
+		return fmt.Errorf("failed to marshal transfer: %v", err)
+	}
+	err = ctx.GetStub().PutState(transferId, transferJSON)
+	if err != nil {
+		return fmt.Errorf("failed to record transfer: %v", err)
+	}
+
+	log.Printf("Transfer completed: %.2f %s from %s to %s", amount, fromAccount.Currency, fromAccountId, toAccountId)
+	return nil
+}
+
+// ExecuteTier1PayoutWithPayment - ACTUALLY transfers money!
+func (s *InsuranceContract) ExecuteTier1PayoutWithPayment(
+	ctx contractapi.TransactionContextInterface,
+	claimId string,
+) error {
+	log.Printf("ExecuteTier1PayoutWithPayment called: claimId=%s", claimId)
+
+	// Get claim (existing function)
+	claimJSON, err := ctx.GetStub().GetState(claimId)
+	if err != nil {
+		return fmt.Errorf("failed to read claim: %v", err)
+	}
+	if claimJSON == nil {
+		return fmt.Errorf("claim %s does not exist", claimId)
+	}
+
+	var claim Claim
+	err = json.Unmarshal(claimJSON, &claim)
+	if err != nil {
+		return fmt.Errorf("failed to unmarshal claim: %v", err)
+	}
+
+	// Validate claim is approved
+	if claim.Tier1Status != "approved" {
+		return fmt.Errorf("tier1 not approved (status: %s)", claim.Tier1Status)
+	}
+	if claim.Tier1Status == "paid" {
+		return fmt.Errorf("tier1 already paid")
+	}
+
+	// Get policy
+	policyKey := "policy:" + claim.PolicyID
+	policyJSON, err := ctx.GetStub().GetState(policyKey)
+	if err != nil {
+		return fmt.Errorf("failed to read policy: %v", err)
+	}
+
+	var policy InsurancePolicy
+	err = json.Unmarshal(policyJSON, &policy)
+	if err != nil {
+		return fmt.Errorf("failed to unmarshal policy: %v", err)
+	}
+
+	// ACTUALLY TRANSFER THE MONEY!
+	insurerAccount := "insurer:" + policy.Insurer
+	clientAccount := "client:" + policy.Client
+
+	err = s.TransferFunds(ctx, insurerAccount, clientAccount, claim.Tier1Amount, claimId)
+	if err != nil {
+		return fmt.Errorf("transfer failed: %v", err)
+	}
+
+	// Update claim status
+	claim.Tier1Status = "paid"
+	claimJSON, err = json.Marshal(claim)
+	if err != nil {
+		return fmt.Errorf("failed to marshal claim: %v", err)
+	}
+
+	err = ctx.GetStub().PutState(claimId, claimJSON)
+	if err != nil {
+		return fmt.Errorf("failed to update claim: %v", err)
+	}
+
+	log.Printf("Tier1 payout executed with payment: claimId=%s, amount=%.2f", claimId, claim.Tier1Amount)
+	return nil
+}
+
+// Example: Initialize accounts when creating a policy
+func (s *InsuranceContract) CreatePolicyWithAccounts(
+	ctx contractapi.TransactionContextInterface,
+	policyId string,
+	insurer string,
+	client string,
+	coverageAmount float64,
+	tier1Amount float64,
+	tier2Amount float64,
+) error {
+	// Create insurer account if it doesn't exist
+	insurerAccount := "insurer:" + insurer
+	_, err := s.GetBalance(ctx, insurerAccount)
+	if err != nil {
+		// Account doesn't exist, create it
+		// In production, you might fund it with actual money or tokens
+		initialBalance := coverageAmount * 2 // Insurer needs enough to cover claims
+		err = s.CreateAccount(ctx, insurerAccount, insurer, initialBalance, "USD")
+		if err != nil {
+			return fmt.Errorf("failed to create insurer account: %v", err)
+		}
+	}
+
+	// Create client account if it doesn't exist
+	clientAccount := "client:" + client
+	_, err = s.GetBalance(ctx, clientAccount)
+	if err != nil {
+		// Account doesn't exist, create it with 0 balance
+		err = s.CreateAccount(ctx, clientAccount, client, 0, "USD")
+		if err != nil {
+			return fmt.Errorf("failed to create client account: %v", err)
+		}
+	}
+
+	// Now create the policy (use existing CreatePolicy logic)
+	// ... (your existing CreatePolicy code) ...
+
+	return nil
+}
+
