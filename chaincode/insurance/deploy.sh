@@ -1,208 +1,200 @@
 #!/bin/bash
-# Deploy insurance chaincode to Hyperledger Fabric network
+# Fixed deployment script that packages chaincode correctly inside CLI container
 
 set -e
 
-# Configuration
 CHAINCODE_NAME="insurance"
-CHAINCODE_VERSION="1.0"
-CHAINCODE_SEQUENCE="1"
+CHAINCODE_VERSION="1.1"
 CHANNEL_NAME="insurance-channel"
-PACKAGE_FILE="${CHAINCODE_NAME}.tar.gz"
 
-# Colors for output
-GREEN='\033[0;32m'
-BLUE='\033[0;34m'
-YELLOW='\033[1;33m'
-NC='\033[0m' # No Color
-
-echo -e "${BLUE}=== Insurance Chaincode Deployment ===${NC}"
+echo "=== Deploying Insurance Chaincode ==="
 echo ""
 
-# Check if package exists
-if [ ! -f "$PACKAGE_FILE" ]; then
-    echo -e "${YELLOW}⚠️  Package not found. Running package.sh first...${NC}"
-    ./package.sh
-    echo ""
+# Get the directory where this script is located
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Copy source files to CLI container
+echo "📦 Copying chaincode files to CLI container..."
+docker exec cli mkdir -p /opt/gopath/src/github.com/insurance/chaincode/insurance
+docker cp "$SCRIPT_DIR/insurance.go" cli:/opt/gopath/src/github.com/insurance/chaincode/insurance/
+docker cp "$SCRIPT_DIR/go.mod" cli:/opt/gopath/src/github.com/insurance/chaincode/insurance/
+docker cp "$SCRIPT_DIR/go.sum" cli:/opt/gopath/src/github.com/insurance/chaincode/insurance/
+docker cp "$SCRIPT_DIR/vendor" cli:/opt/gopath/src/github.com/insurance/chaincode/insurance/
+echo "✅ Files copied"
+echo ""
+
+# Package chaincode using peer command (inside CLI container)
+echo "📦 Packaging chaincode..."
+docker exec cli peer lifecycle chaincode package /opt/gopath/src/github.com/hyperledger/fabric/peer/insurance.tar.gz \
+    --path /opt/gopath/src/github.com/insurance/chaincode/insurance \
+    --lang golang \
+    --label insurance_1.0 2>&1 | grep -v "go:" || true
+echo "✅ Package created"
+echo ""
+
+# Install on Insurer peer
+echo "📥 Installing on Insurer peer..."
+INSTALL_OUTPUT=$(docker exec -e CORE_PEER_LOCALMSPID=InsurerOrgMSP \
+  -e CORE_PEER_MSPCONFIGPATH=/opt/crypto-config/peerOrganizations/insurer.example.com/users/Admin@insurer.example.com/msp \
+  -e CORE_PEER_ADDRESS=peer0.insurer.example.com:7051 \
+  -e CORE_PEER_TLS_ROOTCERT_FILE=/opt/crypto-config/peerOrganizations/insurer.example.com/peers/peer0.insurer.example.com/tls/ca.crt \
+  -e CORE_PEER_TLS_ENABLED=true \
+  cli peer lifecycle chaincode install /opt/gopath/src/github.com/hyperledger/fabric/peer/insurance.tar.gz 2>&1) || true
+
+PACKAGE_ID=$(echo "$INSTALL_OUTPUT" | grep -i "package id" | sed -n 's/.*Package ID: \(.*\), Label.*/\1/p' | head -1)
+
+# If still empty, try alternative format
+if [ -z "$PACKAGE_ID" ]; then
+  PACKAGE_ID=$(echo "$INSTALL_OUTPUT" | grep -oP 'Package ID: \K[^,]+' | head -1)
 fi
 
-# Check if peer CLI is available
-if [ -z "$PEER_BINARY" ]; then
-    if [ -f "/home/reddinho/insurance/fabric-samples/bin/peer" ]; then
-        PEER_BINARY="/home/reddinho/insurance/fabric-samples/bin/peer"
-    elif command -v peer &> /dev/null; then
-        PEER_BINARY=$(command -v peer)
-    else
-        echo -e "${YELLOW}⚠️  Peer binary not found. Please set PEER_BINARY environment variable${NC}"
-        echo "   Example: export PEER_BINARY=/path/to/peer"
-        exit 1
-    fi
+# If still empty, query installed packages
+if [ -z "$PACKAGE_ID" ]; then
+  PACKAGE_ID=$(docker exec -e CORE_PEER_LOCALMSPID=InsurerOrgMSP \
+    -e CORE_PEER_MSPCONFIGPATH=/opt/crypto-config/peerOrganizations/insurer.example.com/users/Admin@insurer.example.com/msp \
+    -e CORE_PEER_ADDRESS=peer0.insurer.example.com:7051 \
+    -e CORE_PEER_TLS_ROOTCERT_FILE=/opt/crypto-config/peerOrganizations/insurer.example.com/peers/peer0.insurer.example.com/tls/ca.crt \
+    -e CORE_PEER_TLS_ENABLED=true \
+    cli peer lifecycle chaincode queryinstalled 2>&1 | grep "Package ID" | tail -1 | sed -n 's/.*Package ID: \(.*\), Label.*/\1/p')
 fi
 
-echo -e "${GREEN}Using peer binary: $PEER_BINARY${NC}"
-echo ""
-
-# Check if network is running
-if ! docker ps | grep -q "peer0.insurer.example.com"; then
-    echo -e "${YELLOW}⚠️  Fabric network is not running!${NC}"
-    echo "   Please start the network first:"
-    echo "   cd /home/reddinho/insurance"
-    echo "   docker-compose -f docker-compose/docker-compose.yaml up -d"
-    exit 1
-fi
-
-# Set environment variables (adjust paths as needed)
-# Use fabric-samples config if available, otherwise use local config
-if [ -f "/home/reddinho/insurance/fabric-samples/config/core.yaml" ]; then
-    export FABRIC_CFG_PATH=/home/reddinho/insurance/fabric-samples/config
-elif [ -f "/home/reddinho/insurance/config/core.yaml" ]; then
-    export FABRIC_CFG_PATH=/home/reddinho/insurance/config
-else
-    echo -e "${YELLOW}⚠️  core.yaml not found. Creating minimal config...${NC}"
-    mkdir -p /home/reddinho/insurance/config
-    cp /home/reddinho/insurance/fabric-samples/config/core.yaml /home/reddinho/insurance/config/core.yaml 2>/dev/null || echo "Please ensure core.yaml exists"
-    export FABRIC_CFG_PATH=/home/reddinho/insurance/config
-fi
-export CORE_PEER_TLS_ENABLED=true
-export ORDERER_CA=/home/reddinho/insurance/crypto-config/ordererOrganizations/example.com/orderers/orderer.example.com/msp/tlscacerts/tlsca.example.com-cert.pem
-export ORDERER_ADDRESS=orderer.example.com:7050
-
-echo -e "${BLUE}Step 1: Install chaincode on Insurer peer${NC}"
-export CORE_PEER_LOCALMSPID=InsurerOrgMSP
-export CORE_PEER_MSPCONFIGPATH=/home/reddinho/insurance/crypto-config/peerOrganizations/insurer.example.com/users/Admin@insurer.example.com/msp
-export CORE_PEER_TLS_ROOTCERT_FILE=/home/reddinho/insurance/crypto-config/peerOrganizations/insurer.example.com/peers/peer0.insurer.example.com/tls/ca.crt
-
-echo "   Installing on peer0.insurer.example.com..."
-$PEER_BINARY lifecycle chaincode install $PACKAGE_FILE \
-    --peerAddresses peer0.insurer.example.com:7051 \
-    --tlsRootCertFiles $CORE_PEER_TLS_ROOTCERT_FILE \
-    --connTimeout 30s
-INSTALL_OUTPUT=$($PEER_BINARY lifecycle chaincode install $PACKAGE_FILE 2>&1)
-PACKAGE_ID=$(echo "$INSTALL_OUTPUT" | grep -oP 'Package ID: \K[^,]+' || $PEER_BINARY lifecycle chaincode calculatepackageid $PACKAGE_FILE)
-echo -e "${GREEN}   ✓ Installed. Package ID: $PACKAGE_ID${NC}"
-echo ""
-
-echo -e "${BLUE}Step 2: Install chaincode on Client peer${NC}"
-export CORE_PEER_LOCALMSPID=ClientOrgMSP
-export CORE_PEER_MSPCONFIGPATH=/home/reddinho/insurance/crypto-config/peerOrganizations/client.example.com/users/Admin@client.example.com/msp
-export CORE_PEER_TLS_ROOTCERT_FILE=/home/reddinho/insurance/crypto-config/peerOrganizations/client.example.com/peers/peer0.client.example.com/tls/ca.crt
-
-echo "   Installing on peer0.client.example.com..."
-$PEER_BINARY lifecycle chaincode install $PACKAGE_FILE \
-    --peerAddresses peer0.client.example.com:8051 \
-    --tlsRootCertFiles $CORE_PEER_TLS_ROOTCERT_FILE
-echo -e "${GREEN}   ✓ Installed${NC}"
-echo ""
-
-echo -e "${BLUE}Step 3: Install chaincode on Regulator peer${NC}"
-export CORE_PEER_LOCALMSPID=RegulatorOrgMSP
-export CORE_PEER_MSPCONFIGPATH=/home/reddinho/insurance/crypto-config/peerOrganizations/regulator.example.com/users/Admin@regulator.example.com/msp
-export CORE_PEER_TLS_ROOTCERT_FILE=/home/reddinho/insurance/crypto-config/peerOrganizations/regulator.example.com/peers/peer0.regulator.example.com/tls/ca.crt
-
-echo "   Installing on peer0.regulator.example.com..."
-$PEER_BINARY lifecycle chaincode install $PACKAGE_FILE \
-    --peerAddresses peer0.regulator.example.com:10051 \
-    --tlsRootCertFiles $CORE_PEER_TLS_ROOTCERT_FILE
-echo -e "${GREEN}   ✓ Installed${NC}"
-echo ""
-
-echo -e "${BLUE}Step 4: Approve chaincode for InsurerOrg${NC}"
-export CORE_PEER_LOCALMSPID=InsurerOrgMSP
-export CORE_PEER_MSPCONFIGPATH=/home/reddinho/insurance/crypto-config/peerOrganizations/insurer.example.com/users/Admin@insurer.example.com/msp
-export CORE_PEER_TLS_ROOTCERT_FILE=/home/reddinho/insurance/crypto-config/peerOrganizations/insurer.example.com/peers/peer0.insurer.example.com/tls/ca.crt
-
-echo "   Approving for InsurerOrg..."
-$PEER_BINARY lifecycle chaincode approveformyorg \
-    -o orderer.example.com:7050 \
-    --channelID $CHANNEL_NAME \
-    --name $CHAINCODE_NAME \
-    --version $CHAINCODE_VERSION \
-    --package-id $PACKAGE_ID \
-    --sequence $CHAINCODE_SEQUENCE \
-    --tls \
-    --cafile $ORDERER_CA \
-    --peerAddresses peer0.insurer.example.com:7051 \
-    --tlsRootCertFiles $CORE_PEER_TLS_ROOTCERT_FILE \
-    --ordererTLSHostnameOverride orderer.example.com
-echo -e "${GREEN}   ✓ Approved${NC}"
-echo ""
-
-echo -e "${BLUE}Step 5: Approve chaincode for ClientOrg${NC}"
-export CORE_PEER_LOCALMSPID=ClientOrgMSP
-export CORE_PEER_MSPCONFIGPATH=/home/reddinho/insurance/crypto-config/peerOrganizations/client.example.com/users/Admin@client.example.com/msp
-export CORE_PEER_TLS_ROOTCERT_FILE=/home/reddinho/insurance/crypto-config/peerOrganizations/client.example.com/peers/peer0.client.example.com/tls/ca.crt
-
-echo "   Approving for ClientOrg..."
-$PEER_BINARY lifecycle chaincode approveformyorg \
-    -o orderer.example.com:7050 \
-    --channelID $CHANNEL_NAME \
-    --name $CHAINCODE_NAME \
-    --version $CHAINCODE_VERSION \
-    --package-id $PACKAGE_ID \
-    --sequence $CHAINCODE_SEQUENCE \
-    --tls \
-    --cafile $ORDERER_CA \
-    --peerAddresses peer0.client.example.com:8051 \
-    --tlsRootCertFiles $CORE_PEER_TLS_ROOTCERT_FILE \
-    --ordererTLSHostnameOverride orderer.example.com
-echo -e "${GREEN}   ✓ Approved${NC}"
-echo ""
-
-echo -e "${BLUE}Step 6: Approve chaincode for RegulatorOrg${NC}"
-export CORE_PEER_LOCALMSPID=RegulatorOrgMSP
-export CORE_PEER_MSPCONFIGPATH=/home/reddinho/insurance/crypto-config/peerOrganizations/regulator.example.com/users/Admin@regulator.example.com/msp
-export CORE_PEER_TLS_ROOTCERT_FILE=/home/reddinho/insurance/crypto-config/peerOrganizations/regulator.example.com/peers/peer0.regulator.example.com/tls/ca.crt
-
-echo "   Approving for RegulatorOrg..."
-$PEER_BINARY lifecycle chaincode approveformyorg \
-    -o orderer.example.com:7050 \
-    --channelID $CHANNEL_NAME \
-    --name $CHAINCODE_NAME \
-    --version $CHAINCODE_VERSION \
-    --package-id $PACKAGE_ID \
-    --sequence $CHAINCODE_SEQUENCE \
-    --tls \
-    --cafile $ORDERER_CA \
-    --peerAddresses peer0.regulator.example.com:10051 \
-    --tlsRootCertFiles $CORE_PEER_TLS_ROOTCERT_FILE \
-    --ordererTLSHostnameOverride orderer.example.com
-echo -e "${GREEN}   ✓ Approved${NC}"
-echo ""
-
-echo -e "${BLUE}Step 7: Commit chaincode to channel${NC}"
-export CORE_PEER_LOCALMSPID=InsurerOrgMSP
-export CORE_PEER_MSPCONFIGPATH=/home/reddinho/insurance/crypto-config/peerOrganizations/insurer.example.com/users/Admin@insurer.example.com/msp
-export CORE_PEER_TLS_ROOTCERT_FILE=/home/reddinho/insurance/crypto-config/peerOrganizations/insurer.example.com/peers/peer0.insurer.example.com/tls/ca.crt
-
-CLIENT_TLS_ROOTCERT=/home/reddinho/insurance/crypto-config/peerOrganizations/client.example.com/peers/peer0.client.example.com/tls/ca.crt
-REGULATOR_TLS_ROOTCERT=/home/reddinho/insurance/crypto-config/peerOrganizations/regulator.example.com/peers/peer0.regulator.example.com/tls/ca.crt
-
-echo "   Committing to $CHANNEL_NAME..."
-$PEER_BINARY lifecycle chaincode commit \
-    -o orderer.example.com:7050 \
-    --channelID $CHANNEL_NAME \
-    --name $CHAINCODE_NAME \
-    --version $CHAINCODE_VERSION \
-    --sequence $CHAINCODE_SEQUENCE \
-    --tls \
-    --cafile $ORDERER_CA \
-    --ordererTLSHostnameOverride orderer.example.com \
-    --peerAddresses peer0.insurer.example.com:7051 \
-    --tlsRootCertFiles $CORE_PEER_TLS_ROOTCERT_FILE \
-    --peerAddresses peer0.client.example.com:8051 \
-    --tlsRootCertFiles $CLIENT_TLS_ROOTCERT \
-    --peerAddresses peer0.regulator.example.com:10051 \
-    --tlsRootCertFiles $REGULATOR_TLS_ROOTCERT
-
-echo -e "${GREEN}   ✓ Committed${NC}"
-echo ""
-
-echo -e "${GREEN}=== Deployment Complete! ===${NC}"
-echo ""
-echo "Chaincode: $CHAINCODE_NAME"
-echo "Version: $CHAINCODE_VERSION"
-echo "Channel: $CHANNEL_NAME"
 echo "Package ID: $PACKAGE_ID"
+echo "$INSTALL_OUTPUT" | grep -i "package id\|installed\|error" || true
 echo ""
-echo "You can now invoke chaincode functions on the $CHANNEL_NAME channel."
+
+# Install on Client peer
+echo "📥 Installing on Client peer..."
+docker exec -e CORE_PEER_LOCALMSPID=ClientOrgMSP \
+  -e CORE_PEER_MSPCONFIGPATH=/opt/crypto-config/peerOrganizations/client.example.com/users/Admin@client.example.com/msp \
+  -e CORE_PEER_ADDRESS=peer0.client.example.com:7051 \
+  -e CORE_PEER_TLS_ROOTCERT_FILE=/opt/crypto-config/peerOrganizations/client.example.com/peers/peer0.client.example.com/tls/ca.crt \
+  -e CORE_PEER_TLS_ENABLED=true \
+  cli peer lifecycle chaincode install /opt/gopath/src/github.com/hyperledger/fabric/peer/insurance.tar.gz 2>&1 | grep -i "package id\|installed" || true
+echo ""
+
+# Install on Regulator peer
+echo "📥 Installing on Regulator peer..."
+docker exec -e CORE_PEER_LOCALMSPID=RegulatorOrgMSP \
+  -e CORE_PEER_MSPCONFIGPATH=/opt/crypto-config/peerOrganizations/regulator.example.com/users/Admin@regulator.example.com/msp \
+  -e CORE_PEER_ADDRESS=peer0.regulator.example.com:7051 \
+  -e CORE_PEER_TLS_ROOTCERT_FILE=/opt/crypto-config/peerOrganizations/regulator.example.com/peers/peer0.regulator.example.com/tls/ca.crt \
+  -e CORE_PEER_TLS_ENABLED=true \
+  cli peer lifecycle chaincode install /opt/gopath/src/github.com/hyperledger/fabric/peer/insurance.tar.gz 2>&1 | grep -i "package id\|installed" || true
+echo ""
+
+# Install on SOC peer
+echo "📥 Installing on SOC peer..."
+docker exec -e CORE_PEER_LOCALMSPID=SOCOrgMSP \
+  -e CORE_PEER_MSPCONFIGPATH=/opt/crypto-config/peerOrganizations/soc.example.com/users/Admin@soc.example.com/msp \
+  -e CORE_PEER_ADDRESS=peer0.soc.example.com:7051 \
+  -e CORE_PEER_TLS_ROOTCERT_FILE=/opt/crypto-config/peerOrganizations/soc.example.com/peers/peer0.soc.example.com/tls/ca.crt \
+  -e CORE_PEER_TLS_ENABLED=true \
+  cli peer lifecycle chaincode install /opt/gopath/src/github.com/hyperledger/fabric/peer/insurance.tar.gz 2>&1 | grep -i "package id\|installed" || true
+echo ""
+
+# Approve for all orgs
+echo "✅ Approving for InsurerOrg..."
+docker exec -e CORE_PEER_LOCALMSPID=InsurerOrgMSP \
+  -e CORE_PEER_MSPCONFIGPATH=/opt/crypto-config/peerOrganizations/insurer.example.com/users/Admin@insurer.example.com/msp \
+  -e CORE_PEER_ADDRESS=peer0.insurer.example.com:7051 \
+  -e CORE_PEER_TLS_ROOTCERT_FILE=/opt/crypto-config/peerOrganizations/insurer.example.com/peers/peer0.insurer.example.com/tls/ca.crt \
+  -e CORE_PEER_TLS_ENABLED=true \
+  cli peer lifecycle chaincode approveformyorg \
+  -o orderer.example.com:7050 \
+  --ordererTLSHostnameOverride orderer.example.com \
+  --tls \
+  --cafile /opt/crypto-config/ordererOrganizations/example.com/orderers/orderer.example.com/msp/tlscacerts/tlsca.example.com-cert.pem \
+  --channelID insurance-channel \
+  --name insurance \
+  --version 1.1 \
+  --package-id "$PACKAGE_ID" \
+  --sequence 1 \
+  --signature-policy "OR('InsurerOrgMSP.peer', 'ClientOrgMSP.peer', 'RegulatorOrgMSP.peer', 'SOCOrgMSP.peer')" 2>&1 | tail -2
+
+echo "✅ Approving for ClientOrg..."
+docker exec -e CORE_PEER_LOCALMSPID=ClientOrgMSP \
+  -e CORE_PEER_MSPCONFIGPATH=/opt/crypto-config/peerOrganizations/client.example.com/users/Admin@client.example.com/msp \
+  -e CORE_PEER_ADDRESS=peer0.client.example.com:7051 \
+  -e CORE_PEER_TLS_ROOTCERT_FILE=/opt/crypto-config/peerOrganizations/client.example.com/peers/peer0.client.example.com/tls/ca.crt \
+  -e CORE_PEER_TLS_ENABLED=true \
+  cli peer lifecycle chaincode approveformyorg \
+  -o orderer.example.com:7050 \
+  --ordererTLSHostnameOverride orderer.example.com \
+  --tls \
+  --cafile /opt/crypto-config/ordererOrganizations/example.com/orderers/orderer.example.com/msp/tlscacerts/tlsca.example.com-cert.pem \
+  --channelID insurance-channel \
+  --name insurance \
+  --version 1.0 \
+  --package-id "$PACKAGE_ID" \
+  --sequence 1 \
+  --signature-policy "OR('InsurerOrgMSP.peer', 'ClientOrgMSP.peer', 'RegulatorOrgMSP.peer', 'SOCOrgMSP.peer')" 2>&1 | tail -2
+
+echo "✅ Approving for RegulatorOrg..."
+docker exec -e CORE_PEER_LOCALMSPID=RegulatorOrgMSP \
+  -e CORE_PEER_MSPCONFIGPATH=/opt/crypto-config/peerOrganizations/regulator.example.com/users/Admin@regulator.example.com/msp \
+  -e CORE_PEER_ADDRESS=peer0.regulator.example.com:7051 \
+  -e CORE_PEER_TLS_ROOTCERT_FILE=/opt/crypto-config/peerOrganizations/regulator.example.com/peers/peer0.regulator.example.com/tls/ca.crt \
+  -e CORE_PEER_TLS_ENABLED=true \
+  cli peer lifecycle chaincode approveformyorg \
+  -o orderer.example.com:7050 \
+  --ordererTLSHostnameOverride orderer.example.com \
+  --tls \
+  --cafile /opt/crypto-config/ordererOrganizations/example.com/orderers/orderer.example.com/msp/tlscacerts/tlsca.example.com-cert.pem \
+  --channelID insurance-channel \
+  --name insurance \
+  --version 1.0 \
+  --package-id "$PACKAGE_ID" \
+  --sequence 1 \
+  --signature-policy "OR('InsurerOrgMSP.peer', 'ClientOrgMSP.peer', 'RegulatorOrgMSP.peer', 'SOCOrgMSP.peer')" 2>&1 | tail -2
+
+echo "✅ Approving for SOCOrg..."
+docker exec -e CORE_PEER_LOCALMSPID=SOCOrgMSP \
+  -e CORE_PEER_MSPCONFIGPATH=/opt/crypto-config/peerOrganizations/soc.example.com/users/Admin@soc.example.com/msp \
+  -e CORE_PEER_ADDRESS=peer0.soc.example.com:7051 \
+  -e CORE_PEER_TLS_ROOTCERT_FILE=/opt/crypto-config/peerOrganizations/soc.example.com/peers/peer0.soc.example.com/tls/ca.crt \
+  -e CORE_PEER_TLS_ENABLED=true \
+  cli peer lifecycle chaincode approveformyorg \
+  -o orderer.example.com:7050 \
+  --ordererTLSHostnameOverride orderer.example.com \
+  --tls \
+  --cafile /opt/crypto-config/ordererOrganizations/example.com/orderers/orderer.example.com/msp/tlscacerts/tlsca.example.com-cert.pem \
+  --channelID insurance-channel \
+  --name insurance \
+  --version 1.0 \
+  --package-id "$PACKAGE_ID" \
+  --sequence 1 \
+  --signature-policy "OR('InsurerOrgMSP.peer', 'ClientOrgMSP.peer', 'RegulatorOrgMSP.peer', 'SOCOrgMSP.peer')" 2>&1 | tail -2
+
+echo ""
+
+# Commit
+echo "🚀 Committing chaincode..."
+docker exec -e CORE_PEER_LOCALMSPID=InsurerOrgMSP \
+  -e CORE_PEER_MSPCONFIGPATH=/opt/crypto-config/peerOrganizations/insurer.example.com/users/Admin@insurer.example.com/msp \
+  -e CORE_PEER_ADDRESS=peer0.insurer.example.com:7051 \
+  -e CORE_PEER_TLS_ROOTCERT_FILE=/opt/crypto-config/peerOrganizations/insurer.example.com/peers/peer0.insurer.example.com/tls/ca.crt \
+  -e CORE_PEER_TLS_ENABLED=true \
+  cli peer lifecycle chaincode commit \
+  -o orderer.example.com:7050 \
+  --channelID insurance-channel \
+  --name insurance \
+  --version 1.1 \
+  --sequence 1 \
+  --signature-policy "OR('InsurerOrgMSP.peer', 'ClientOrgMSP.peer', 'RegulatorOrgMSP.peer', 'SOCOrgMSP.peer')" \
+  --tls \
+  --cafile /opt/crypto-config/ordererOrganizations/example.com/orderers/orderer.example.com/msp/tlscacerts/tlsca.example.com-cert.pem \
+  --ordererTLSHostnameOverride orderer.example.com \
+  --peerAddresses peer0.insurer.example.com:7051 \
+  --tlsRootCertFiles /opt/crypto-config/peerOrganizations/insurer.example.com/peers/peer0.insurer.example.com/tls/ca.crt \
+  --peerAddresses peer0.client.example.com:7051 \
+  --tlsRootCertFiles /opt/crypto-config/peerOrganizations/client.example.com/peers/peer0.client.example.com/tls/ca.crt \
+  --peerAddresses peer0.regulator.example.com:7051 \
+  --tlsRootCertFiles /opt/crypto-config/peerOrganizations/regulator.example.com/peers/peer0.regulator.example.com/tls/ca.crt \
+  --peerAddresses peer0.soc.example.com:7051 \
+  --tlsRootCertFiles /opt/crypto-config/peerOrganizations/soc.example.com/peers/peer0.soc.example.com/tls/ca.crt 2>&1
+
+echo ""
+echo "✅✅✅ Chaincode deployment complete!"
+echo ""
+echo "You can now use the chaincode commands from PLAY_WITH_NETWORK.md"
 

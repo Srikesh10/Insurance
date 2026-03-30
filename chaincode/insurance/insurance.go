@@ -11,6 +11,7 @@
 package main
 
 import (
+	// Forced rebuild for deployment
 	"encoding/json"
 	"fmt"
 	"log"
@@ -167,6 +168,16 @@ func (s *InsuranceContract) SubmitClaim(
 	incidentReportJSON string,
 ) (string, error) {
 	log.Printf("SubmitClaim called: policyId=%s", policyId)
+	
+	// Access Control: Only Trusted Oracle (SOCOrgMSP) can submit verified claims
+	// This solves the 'Oracle Problem' by preventing clients from self-reporting
+	clientMSPID, mspErr := ctx.GetClientIdentity().GetMSPID()
+	if mspErr != nil {
+		return "", fmt.Errorf("failed to get client identity: %v", mspErr)
+	}
+	if clientMSPID != "SOCOrgMSP" {
+		return "", fmt.Errorf("access denied: only SOCOrgMSP can submit claims (Oracle Pattern). You are %s", clientMSPID)
+	}
 
 	// Parse incident report
 	var incidentReport IncidentReport
